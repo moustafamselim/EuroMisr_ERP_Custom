@@ -1,1 +1,198 @@
+// ==============================
+// استخراج الاحداثيات وظهور الموقع على الخريطة والعنوان ايضا فى حقل منفصل
+/////////////////////////////////////////////////////////////////////////
+// القسم 1: ربط الحدث داخل نموذج Customer
+// عند تحديث الفورم يتم ربط زر Google Maps بالدالة الذكية
+// ==============================
 
+frappe.ui.form.on('Customer', {
+    refresh: function(frm) {
+        // تنظيف الزرار وربطه
+        if (frm.fields_dict['open_in_google_maps']) {
+            frm.fields_dict['open_in_google_maps'].$wrapper.find('button').off('click').on('click', function() {
+                execute_smart_map_sync(frm);
+            });
+        }
+    }
+});
+
+
+// ==============================
+// القسم 2: الدالة الرئيسية لتنفيذ مزامنة الموقع
+// تتحقق من وجود الرابط ثم تبدأ معالجة الإحداثيات
+// ==============================
+
+function execute_smart_map_sync(frm) {
+    if (!frm.doc.whatsapp_location_url) {
+        frappe.msgprint(__("من فضلك ضع الرابط أولاً"));
+        return;
+    }
+
+    let url = frm.doc.whatsapp_location_url;
+
+    // ==============================
+    // القسم 3: استخراج الإحداثيات من الرابط
+    // يدعم أكثر من صيغة لرابط Google Maps
+    // ==============================
+
+    let match = url.match(/([-+]?\d+\.\d+)\s*,\s*([-+]?\d+\.\d+)/) || 
+                url.match(/q=([-+]?\d+\.\d+),([-+]?\d+\.\d+)/) || 
+                url.match(/@([-+]?\d+\.\d+),([-+]?\d+\.\d+)/);
+
+    if (match) {
+        let lat = parseFloat(match[1]);
+        let lng = parseFloat(match[2]);
+
+        // ==============================
+        // القسم 4: تحديث البيانات (Data Update)
+        // يتم إنشاء GeoJSON وتحديث حقل الخريطة
+        // ==============================
+
+        let location_json = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {},
+                "geometry": { "type": "Point", "coordinates": [lng, lat] }
+            }]
+        };
+        frm.set_value('customer_map', JSON.stringify(location_json));
+
+        // ==============================
+        // القسم 5: تحديث العرض المرئي للخريطة (Visual Sync)
+        // إزالة الماركر القديم وإضافة الجديد وضبط الزووم
+        // ==============================
+
+        setTimeout(() => {
+            let map_field = frm.fields_dict.customer_map;
+            if (map_field && map_field.map) {
+                let map = map_field.map;
+
+                // أ- مسح أي ماركرات قديمة لضمان ظهور الموقع الجديد فقط
+                if (map._layers) {
+                    Object.keys(map._layers).forEach(function(layerId) {
+                        let layer = map._layers[layerId];
+                        if (layer instanceof L.Marker) {
+                            map.removeLayer(layer);
+                        }
+                    });
+                }
+
+                // ب- إضافة الماركر الجديد يدوياً لضمان الدقة
+                L.marker([lat, lng]).addTo(map);
+
+                // ج- إجبار الخريطة على العودة للمركز والزووم 18
+                map.invalidateSize();
+                map.setView([lat, lng], 18, { animate: true });
+            }
+        }, 300);
+
+        // ==============================
+        // القسم 6: جلب العنوان بالعربي (Reverse Geocoding)
+        // باستخدام OpenStreetMap Nominatim API
+        // ==============================
+
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=ar`)
+            .then(res => res.json())
+            .then(data => {
+                if (data && data.display_name) {
+                    frm.set_value('address', data.display_name);
+                }
+            });
+
+        // ==============================
+        // القسم 7: رسالة نجاح
+        // ==============================
+
+        frappe.show_alert({message: __('تم تحديث الموقع وتثبيت الخريطة'), indicator: 'green'});
+    } else {
+
+        // ==============================
+        // القسم 8: حالة الخطأ في حال عدم وجود إحداثيات صحيحة
+        // ==============================
+
+        frappe.msgprint(__("الرابط لا يحتوي على إحداثيات صحيحة"));
+    }
+}
+
+###################################################################
+
+// open google map butten //
+
+frappe.ui.form.on('Customer', {
+    refresh: function(frm) {
+        // 1. الزرار الأول: تحديث الخريطة الداخلية والعنوان (الكود اللي اشتغل معاك)
+        if (frm.fields_dict['open_in_google_maps']) {
+            frm.fields_dict['open_in_google_maps'].$wrapper.find('button').off('click').on('click', function() {
+                execute_smart_map_sync(frm);
+            });
+        }
+
+        // 2. الزرار الثاني: فتح جوجل ماب في صفحة خارجية (بسيط جداً)
+        if (frm.fields_dict['view_external_map']) {
+            frm.fields_dict['view_external_map'].$wrapper.find('button').off('click').on('click', function() {
+                open_location_externally(frm);
+            });
+        }
+    }
+});
+
+// وظيفة الزرار الأول (تحديث داخلي وزووم 18)
+function execute_smart_map_sync(frm) {
+    if (!frm.doc.whatsapp_location_url) {
+        frappe.msgprint(__("من فضلك ضع الرابط أولاً"));
+        return;
+    }
+    let url = frm.doc.whatsapp_location_url;
+    let match = url.match(/([-+]?\d+\.\d+)\s*,\s*([-+]?\d+\.\d+)/) || 
+                url.match(/q=([-+]?\d+\.\d+),([-+]?\d+\.\d+)/) || 
+                url.match(/@([-+]?\d+\.\d+),([-+]?\d+\.\d+)/);
+
+    if (match) {
+        let lat = parseFloat(match[1]);
+        let lng = parseFloat(match[2]);
+
+        // تحديث البيانات
+        let location_json = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {},
+                "geometry": { "type": "Point", "coordinates": [lng, lat] }
+            }]
+        };
+        frm.set_value('customer_map', JSON.stringify(location_json));
+
+        // تحديث الرؤية والزووم
+        setTimeout(() => {
+            let map_field = frm.fields_dict.customer_map;
+            if (map_field && map_field.map) {
+                let map = map_field.map;
+                // مسح الماركرات القديمة ورسم الجديد
+                if (map._layers) {
+                    Object.keys(map._layers).forEach(id => {
+                        if (map._layers[id] instanceof L.Marker) map.removeLayer(map._layers[id]);
+                    });
+                }
+                L.marker([lat, lng]).addTo(map);
+                map.invalidateSize();
+                map.setView([lat, lng], 18, { animate: true });
+            }
+        }, 300);
+
+        // جلب العنوان
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=ar`)
+            .then(res => res.json())
+            .then(data => { if (data) frm.set_value('address', data.display_name); });
+    }
+}
+
+// وظيفة الزرار الثاني (فتح خارجي فقط)
+function open_location_externally(frm) {
+    if (frm.doc.whatsapp_location_url) {
+        // فتح الرابط الموجود في الحقل مباشرة في نافذة جديدة
+        window.open(frm.doc.whatsapp_location_url, '_blank');
+    } else {
+        frappe.msgprint(__("الحقل فارغ، لا يوجد رابط لفتحه"));
+    }
+}
