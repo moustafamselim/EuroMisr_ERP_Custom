@@ -1,19 +1,19 @@
 // ==========================================================
 // القسم 1: ربط الأحداث (Event Triggers) في شاشة العميل Customer
-// تم دمج جميع الأزرار (تحديث الخريطة، الفتح الخارجي) هنا
+// تم تنظيف التكرار وربط كل زرار بوظيفته مرة واحدة فقط
 // ==========================================================
 
 frappe.ui.form.on('Customer', {
     refresh: function(frm) {
         
-        // --- [الزرار الأول: تحديث الخريطة الداخلية والعنوان] ---
+        // 1. ربط زرار [تحديث الخريطة الداخلية] - كان متكرراً وتم دمجه
         if (frm.fields_dict['open_in_google_maps']) {
             frm.fields_dict['open_in_google_maps'].$wrapper.find('button').off('click').on('click', function() {
                 execute_smart_map_sync(frm);
             });
         }
 
-        // --- [الزرار الثاني: فتح جوجل ماب في صفحة خارجية] ---
+        // 2. ربط زرار [فتح جوجل ماب في صفحة خارجية]
         if (frm.fields_dict['view_external_map']) {
             frm.fields_dict['view_external_map'].$wrapper.find('button').off('click').on('click', function() {
                 open_location_externally(frm);
@@ -25,7 +25,7 @@ frappe.ui.form.on('Customer', {
 
 // ==========================================================
 // القسم 2: الدالة الرئيسية لتنفيذ مزامنة الموقع (Smart Map Sync)
-// تقوم باستخراج الإحداثيات، تحديث الخريطة، وجلب العنوان
+// (نفس منطق الكود الخاص بك دون أي تعديل في الوظائف)
 // ==========================================================
 
 function execute_smart_map_sync(frm) {
@@ -36,7 +36,7 @@ function execute_smart_map_sync(frm) {
 
     let url = frm.doc.whatsapp_location_url;
 
-    // استخراج الإحداثيات من الرابط (يدعم أكثر من صيغة)
+    // استخراج الإحداثيات
     let match = url.match(/([-+]?\d+\.\d+)\s*,\s*([-+]?\d+\.\d+)/) || 
                 url.match(/q=([-+]?\d+\.\d+),([-+]?\d+\.\d+)/) || 
                 url.match(/@([-+]?\d+\.\d+),([-+]?\d+\.\d+)/);
@@ -45,7 +45,6 @@ function execute_smart_map_sync(frm) {
         let lat = parseFloat(match[1]);
         let lng = parseFloat(match[2]);
 
-        // تحديث بيانات الـ GeoJSON لحقل الخريطة
         let location_json = {
             "type": "FeatureCollection",
             "features": [{
@@ -56,13 +55,10 @@ function execute_smart_map_sync(frm) {
         };
         frm.set_value('customer_map', JSON.stringify(location_json));
 
-        // تحديث الرؤية والزووم 18 داخل الخريطة
         setTimeout(() => {
             let map_field = frm.fields_dict.customer_map;
             if (map_field && map_field.map) {
                 let map = map_field.map;
-
-                // مسح الماركرات القديمة لضمان الدقة
                 if (map._layers) {
                     Object.keys(map._layers).forEach(function(layerId) {
                         let layer = map._layers[layerId];
@@ -71,15 +67,12 @@ function execute_smart_map_sync(frm) {
                         }
                     });
                 }
-
-                // إضافة الماركر الجديد وضبط الزووم
                 L.marker([lat, lng]).addTo(map);
                 map.invalidateSize();
                 map.setView([lat, lng], 18, { animate: true });
             }
         }, 300);
 
-        // جلب العنوان بالعربي (Reverse Geocoding)
         fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=ar`)
             .then(res => res.json())
             .then(data => { 
@@ -88,23 +81,19 @@ function execute_smart_map_sync(frm) {
                 }
             });
 
-        // رسالة نجاح العملية
         frappe.show_alert({message: __('تم تحديث الموقع وتثبيت الخريطة'), indicator: 'green'});
-
     } else {
-        // حالة عدم وجود إحداثيات صحيحة
         frappe.msgprint(__("الرابط لا يحتوي على إحداثيات صحيحة"));
     }
 }
 
 
 // ==========================================================
-// القسم 3: وظيفة الزرار الثاني (فتح الموقع في صفحة خارجية)
+// القسم 3: وظيفة الزرار الخاص بالفتح الخارجي
 // ==========================================================
 
 function open_location_externally(frm) {
     if (frm.doc.whatsapp_location_url) {
-        // فتح الرابط الموجود في الحقل مباشرة في نافذة جديدة
         window.open(frm.doc.whatsapp_location_url, '_blank');
     } else {
         frappe.msgprint(__("الحقل فارغ، لا يوجد رابط لفتحه"));
