@@ -1,0 +1,127 @@
+// البحث باسم العميل او البائغ او الغنوان
+frappe.listview_settings['Customer'] = {
+    onload: function(listview) {
+        // إضافة زر البحث المتقدم في قائمة العملاء
+        listview.page.add_inner_button('🔍 Advanced Search', function() {
+            let d = new frappe.ui.Dialog({
+                title: '<span style="font-weight:900; color:#1e293b;">🔍 Advanced Search</span>',
+                fields: [
+                    { label: 'Customer Name', fieldname: 'customer_name', fieldtype: 'Data' },
+                    { label: 'Address Keywords', fieldname: 'address_line1', fieldtype: 'Data', description: 'Search by city or street' },
+                    { label: 'Sales Person', fieldname: 'sales_person', fieldtype: 'Link', options: 'Sales Person' }
+                ],
+                primary_action_label: 'Explore',
+                primary_action(values) {
+                    let customer_filters = [["disabled", "=", 0]];
+
+                    if (values.customer_name) 
+                        customer_filters.push(["customer_name", "like", `%${values.customer_name}%`]);
+                    
+                    if (values.address_line1) 
+                        customer_filters.push(["primary_address", "like", `%${values.address_line1}%`]);
+
+                    // 1. جلب قائمة العملاء بناءً على الفلاتر الأساسية (الاسم والعنوان)
+                    frappe.call({
+                        method: "frappe.client.get_list",
+                        args: {
+                            doctype: "Customer",
+                            filters: customer_filters,
+                            fields: ["name"],
+                            limit_page_length: 200
+                        },
+                        callback: function(r) {
+                            if (!r.message || r.message.length === 0)
+                                return frappe.msgprint("لم يتم العثور على نتائج مطابقة للفلاتر الأساسية.");
+
+                            // 2. جلب بيانات كل عميل بالكامل للتمكن من فحص جدول Sales Team
+                            let promises = r.message.map(c => frappe.db.get_doc("Customer", c.name));
+
+                            Promise.all(promises).then(full_docs => {
+                                let final_docs = full_docs;
+
+                                // 3. إذا تم اختيار بياع، نفلتر النتائج يدوياً للتأكد من وجوده في الجدول
+                                if (values.sales_person) {
+                                    final_docs = full_docs.filter(doc => 
+                                        (doc.sales_team || []).some(st => st.sales_person === values.sales_person)
+                                    );
+                                }
+
+                                if (final_docs.length === 0)
+                                    return frappe.msgprint("لا يوجد عملاء مرتبطة بهذا البياع ضمن نتائج البحث.");
+
+                                d.hide();
+                                render_full_info_view(final_docs);
+                            });
+                        }
+                    });
+                }
+            });
+            d.show();
+        });
+    }
+};
+
+// دالة التصميم الجرافيكي المطور (مع إظهار المناديب)
+function render_full_info_view(docs) {
+    const colors = ['#00A09D', '#6366f1', '#10b981', '#f59e0b', '#ef4444'];
+
+    let html = `
+    <style>
+        .full-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; padding: 10px; }
+        .full-card { 
+            background: #fff; border-radius: 20px; border: 1px solid #e5e7eb; overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02); transition: all 0.3s ease; cursor: pointer;
+        }
+        .full-card:hover { transform: translateY(-5px); box-shadow: 0 15px 30px rgba(0,0,0,0.08); }
+        .card-header { height: 6px; width: 100%; }
+        .card-inner { padding: 20px; }
+        .main-info { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; }
+        .logo-img { width: 60px; height: 60px; border-radius: 12px; object-fit: cover; background: #f1f5f9; border: 1px solid #eee; }
+        .name-txt { font-weight: 800; font-size: 16px; color: #1e293b; margin: 0; line-height: 1.2; }
+        .address-box { font-size: 12px; color: #64748b; margin-top: 5px; font-weight: 600; display: flex; align-items: flex-start; gap: 5px; }
+        .address-box i { color: #ef4444; margin-top: 3px; }
+        .details-content { background: #f8fafc; border-radius: 12px; padding: 12px; margin-top: 15px; border-left: 4px solid #cbd5e1; }
+        .details-text { font-size: 13px; color: #475569; line-height: 1.4; font-weight: 500; }
+        .team-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 15px; }
+        .sp-tag { background: #f1f5f9; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 700; color: #334155; border: 1px solid #e2e880; }
+        .sp-tag i { color: #6366f1; margin-right: 3px; }
+    </style>
+    <div class="full-grid">`;
+
+    docs.forEach((doc, i) => {
+        let color = colors[i % colors.length];
+        let sellers = (doc.sales_team || []).map(s => s.sales_person);
+        let img = doc.image || '/assets/frappe/images/default-avatar.png';
+        let address = doc.primary_address || "No address listed";
+        let details = doc.customer_details || doc.description || "لا توجد تفاصيل إضافية";
+
+        html += `
+        <div class="full-card" onclick="frappe.set_route('Form', 'Customer', '${doc.name}')">
+            <div class="card-header" style="background: ${color}"></div>
+            <div class="card-inner">
+                <div class="main-info">
+                    <img src="${img}" class="logo-img">
+                    <div class="title-area">
+                        <div class="name-txt">${doc.customer_name || doc.name}</div>
+                        <div class="address-box"><i class="fa fa-map-marker"></i> <span>${address}</span></div>
+                    </div>
+                </div>
+                <div class="details-content" style="border-left-color: ${color}">
+                    <div class="details-text">${details.length > 100 ? details.substring(0, 100) + '...' : details}</div>
+                </div>
+                <div class="team-tags">
+                    ${sellers.map(s => `<span class="sp-tag"><i class="fa fa-user-circle"></i> ${s}</span>`).join('')}
+                    ${sellers.length === 0 ? '<span class="sp-tag" style="color:#94a3b8 italic;">No Assigned Seller</span>' : ''}
+                </div>
+            </div>
+        </div>`;
+    });
+
+    html += `</div>`;
+    
+    frappe.msgprint({
+        title: '<i class="fa fa-users" style="color:#00A09D;"></i> Discovery Results',
+        message: html,
+        wide: true
+    });
+}
