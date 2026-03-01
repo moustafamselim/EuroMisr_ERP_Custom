@@ -1,0 +1,149 @@
+// ==========================================================
+// أولاً: العمليات التي تتم على شاشة "Sales Plan" (الأب)
+// ==========================================================
+frappe.ui.form.on('Sales Plan', {
+
+    refresh: function(frm) {
+        
+        // ----------------------------------------------------------
+        // [بلوك: تنسيق شكل المعاينة وزر الرفع (اللوجو أزرق)]
+        // ----------------------------------------------------------
+        frappe.dom.set_style(`
+            [data-fieldname="logo_preview"] img {
+                max-width: 150px !important;
+                max-height: 150px !important;
+                border: 2px solid #f0f0f0;
+                border-radius: 10px;
+                object-fit: contain;
+                background-color: #fcfcfc;
+                margin-top: 5px;
+            }
+            [data-fieldname="take_photo"] button {
+                background-color: #2490ef !important;
+                color: white !important;
+                font-weight: bold !important;
+            }
+        `);
+
+        // ----------------------------------------------------------
+        // [بلوك: تلوين حقل العميل والسطر باللون الأحمر للعملاء الجدد]
+        // ----------------------------------------------------------
+        setTimeout(() => {
+            if (frm.fields_dict.sales_plan_details && frm.fields_dict.sales_plan_details.grid) {
+                frm.fields_dict.sales_plan_details.grid.wrapper.find('.grid-row').each(function() {
+                    let row_name = $(this).attr('data-name');
+                    let row = locals['Sales Plan Details'][row_name];
+                    
+                    if (row && row.customer_status === 'New') {
+                        $(this).css('background-color', '#fff5f5');
+                        $(this).find('[data-fieldname="company_name"]').css('background-color', '#ffcccc');
+                    }
+                });
+            }
+        }, 300); 
+    },
+
+    validate: function(frm) {
+        let has_error = false;
+        (frm.doc.sales_plan_details || []).forEach(row => {
+            if (row.customer_status === 'New') {
+                row.row_status = 'Pending';
+            }
+            if (row.customer_status === 'Existing' && !row.company_logo) {
+                frappe.msgprint(__('السطر رقم {0}: يجب رفع لوجو العميل لأن الحالة "Existing"', [row.idx]));
+                frappe.validated = false; 
+                has_error = true;
+            }
+        });
+        if (has_error) {
+            frappe.throw(__('يرجى تصحيح الأخطاء قبل الحفظ.'));
+        }
+    }
+});
+
+// ==========================================================
+// ثانياً: العمليات التي تتم داخل الجدول (Sales Plan Details)
+// ==========================================================
+frappe.ui.form.on('Sales Plan Details', {
+
+    // ----------------------------------------------------------
+    // [بلوك: تلوين زر Get Location بالأزرق عند الرندر]
+    // ----------------------------------------------------------
+    form_render: function(frm, cdt, cdn) {
+        let row = frm.fields_dict.sales_plan_details.grid.get_row(cdn);
+        row.wrapper.find('button[data-fieldname="get_location"]')
+            .css({'background-color': '#007bff', 'color': 'white', 'font-weight': 'bold'});
+    },
+
+    // ----------------------------------------------------------
+    // [بلوك: جلب الموقع الجغرافي وحفظه]
+    // ----------------------------------------------------------
+    get_location: function(frm, cdt, cdn) {
+        let row = locals[cdt][cdn];
+        const gps_options = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
+
+        const success_callback = (position) => {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+            let google_maps_url = `https://www.google.com/maps?q=${lat},${lon}`;
+            
+            let geo_data = {
+                "type": "FeatureCollection",
+                "features": [{
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": { "type": "Point", "coordinates": [lon, lat] }
+                }]
+            };
+
+            frappe.model.set_value(cdt, cdn, 'url_location', google_maps_url);
+            frappe.model.set_value(cdt, cdn, 'geolocation', JSON.stringify(geo_data));
+            frm.refresh_field('sales_plan_details'); 
+
+            frappe.show_alert({ message: __("تم جلب الموقع.. جاري الحفظ 💾"), indicator: 'blue' });
+            frm.save();
+        };
+
+        const error_callback = (error) => {
+            frappe.msgprint({ title: __('مشكلة في الموقع'), message: error.message, indicator: 'red' });
+        };
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(success_callback, error_callback, gps_options);
+        }
+    },
+
+    // ----------------------------------------------------------
+    // [بلوك: إظهار اسم اليوم عند اختيار التاريخ]
+    // ----------------------------------------------------------
+    date: function(frm, cdt, cdn) {
+        let row = locals[cdt][cdn];
+        if (row.date) {
+            let day = new Date(row.date).toLocaleDateString('en-US', { weekday: 'long' });
+            frappe.model.set_value(cdt, cdn, 'day_name', day);
+        }
+    },
+
+    // ----------------------------------------------------------
+    // [بلوك: وظيفة زر رفع اللوجو]
+    // ----------------------------------------------------------
+    take_photo: function(frm, cdt, cdn) {
+        new frappe.ui.FileUploader({
+            doctype: frm.doc.doctype, 
+            docname: frm.doc.name, 
+            fieldname: "sales_plan_details",
+            on_success: (file) => {
+                frappe.model.set_value(cdt, cdn, 'company_logo', file.file_url);
+                frm.fields_dict['sales_plan_details'].grid.refresh();
+                frm.save();
+            }
+        });
+    },
+    
+    // ----------------------------------------------------------
+    // [بلوك: تحديث اللون اللحظي]
+    // ----------------------------------------------------------
+    customer_status: function(frm) {
+        frm.trigger('refresh');
+    }
+});
