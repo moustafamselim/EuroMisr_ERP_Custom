@@ -1,0 +1,71 @@
+// كود شاشة Sales Plan Audit 
+// الجزء الخاص فقط للازرار فى واجهه الشاشة 
+
+frappe.ui.form.on('Sales Plan Audit', {
+    refresh: function(frm) {
+        if (frm.doc.docstatus === 0) {
+            frm.add_custom_button(__('Fetch Latest Data'), () => {
+                frm.trigger('fetch_plan_data');
+            }, __("Actions"));
+            
+            frm.add_custom_button(__('Approve Selected'), () => {
+                frm.trigger('bulk_approve');
+            }, __("Actions"));
+        }
+    },
+
+    fetch_plan_data: function(frm) {
+        if (!frm.doc.date) return frappe.msgprint(__('اختر التاريخ أولاً'));
+
+        frappe.call({
+            method: "euro_custom.sales_plan.sales_plan.get_audit_data",
+            args: { audit_date: frm.doc.date },
+            freeze: true,
+            callback: function(r) {
+                if (r.message) {
+                    frm.clear_table('audit_details');
+                    r.message.forEach(d => {
+                        let row = frm.add_child('audit_details');
+                        row.sales_person = d.sales_person;
+                        row.company_name = d.company_name;
+                        row.customer_status = d.customer_status;
+                        row.company_logo = d.company_logo;
+                        row.geolocation = d.geolocation;
+                        row.url_location = d.url_location; // اللوكيشن
+                        row.row_status = d.row_status;     // الحالة الحقيقية من الداتابيز
+                        row.source_id = d.source_id;
+                    });
+                    frm.refresh_field('audit_details');
+                }
+            }
+        });
+    },
+
+    bulk_approve: function(frm) {
+        let selected = frm.get_selected();
+        if (selected.length === 0) return frappe.msgprint("اختر أسطر أولاً");
+        selected.forEach(row_id => {
+            let row = locals["Sales Plan Audit Detail"][row_id];
+            frappe.model.set_value(row.doctype, row.name, "row_status", "Approved");
+            if (row.source_id) {
+                frappe.db.set_value('Sales Plan Details', row.source_id, 'row_status', 'Approved');
+            }
+        });
+        frm.refresh_field('audit_details');
+    }
+});
+
+// تلوين الـ New بلون أحمر ثابت
+frappe.ui.form.on('Sales Plan Audit Detail', {
+    audit_details_render: function(frm) {
+        frm.fields_dict.audit_details.grid.grid_rows.forEach(row => {
+            if (row.doc.customer_status === 'New') {
+                row.wrapper.find('.grid-static-col').css({'color': 'red', 'font-weight': 'bold'});
+                row.wrapper.css('background-color', '#fff5f5');
+            } else {
+                row.wrapper.find('.grid-static-col').css({'color': '', 'font-weight': ''});
+                row.wrapper.css('background-color', '');
+            }
+        });
+    }
+});
